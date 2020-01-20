@@ -1,0 +1,481 @@
+## Getting Started
+
+The VA API Platform uses the [OpenID Connect](https://openid.net/specs/openid-connect-core-1_0.html) standard to allow Veterans to authorize third-party applications to access data on their behalf. The platform also allows some users, such as officers working at Veteran Service Organizations (VSO), to access data on behalf of a Veteran who has granted them approval.
+
+While we test our OpenID Connect flow to ensure the best experience for Veterans, developers, and other users, we're approving teams to work with our OpenID Connect and associated APIs on a case-by-case basis. If you would like to help us build these services out, please submit an [application](/apply) to request access.
+
+**In order to get approval of your application, you'll need to supply the following information:**
+
+* **A Redirect URL** - that will receive your OpenID Connect token
+* **Application name** - The name and/or URL of your application that identifies it on authorization screens.
+* **Type of Application** - Mobile app, Single page web application, or a Server-based application
+* **Scopes** - Data you'd like to access with your app (see [#scopes](#scopes))
+
+## Building OpenID Connect Applications
+
+After being approved to use VA OpenID Connect, you'll receive a *client id* and, if you're building a Server-based application, a *client secret*.
+
+We use separate authorization servers for our development and production environments. This documentation uses the development environment authorization server URL. You'll be provided with the production authorization server URL when you are approved for production access.
+
+### Initiating Authorization
+
+Initiate the OpenID Connect authorization by directing your application's users to 
+
+```plaintext
+https://dev-api.va.gov/oauth2/authorization
+``` 
+
+with the following query parameters:
+
+| Query Parameter | Required     | Values |
+| --------------- | ------------ | ------ |
+| `client_id`     | **Required** | The `client_id` issued by the VA API Platform team |
+| `redirect_uri`  | **Required** | The URL you supplied. The user will be redirected to this URL after authorizing your application. |
+| `response_type` | **Required** | One or two of `id_token`, `token`, or `code`. Using `code` will require your application to complete the [Authorization Code Flow](#authorization-code-flow). Using `id_token` or `token` allows you to use the [Implicit flow](#implicit-flow). See [Token Types](#id-token) for further explanation. |
+| `nonce`         | Optional     | Used with `id_token` to verify token integrity. Ensure the nonce in your `id_token` is the same as this value. See [security](#security-considerations). |
+| `response_mode` | Optional     | Either `fragment` or `query`, recommended not to use unless you have a specific reason. Defaults to fragment. |
+| `scope`         | Optional     | Will use your application's default scopes unless you specify a smaller subset of scopes separated by a space. |
+| `state`         | Optional     | Ensures authorization flow integrity. See [security](#security-considerations). |
+
+Example Authorization URL:
+```plaintext
+https://dev-api.va.gov/oauth2/authorization?client_id=0oa1c01m77heEXUZt2p7&redirect_uri=<yourRedirectURL>&response_type=id_token token&response_mode=fragment&state=1AOQK33KIfH2g0ADHvU1oWAb7xQY7p6qWnUFiG1ffcUdrbCY1DBAZ3NffrjaoBGQ&nonce=o5jYpLSe29RBHBsn5iAnMKYpYw2Iw9XRBweacc001hRo5xxJEbHuniEbhuxHfVZy&scope=openid offline_access profile email veteran_status.read
+```
+(⚠️Be sure to replace `<yourRedirectURL>` with the redirect URL that you provided during registration)
+
+The user will be taken through a flow where they are authenticated by VA.gov and then asked to consent to allowing your application access to the data it is requesting (as defined by your scopes). After authorizing, your application will receive slightly different responses based on the `response_type` you requested.
+
+### Implicit Flow
+
+This flow works for applications that aren't able to keep a *client secret* protected &mdash; such as single-page webapps or mobile applications. This flow is selected by using either the `id_token` or `token` value for the `response_type` parameter.
+
+Your application will need to redirect the user's browser to our OpenID authorization server with a request like this:
+
+```http
+HTTP/1.1 302 Found
+Location: https://dev-api.va.gov/oauth2/authorization?
+  client_id=s6BhdRkqt3
+  &response_type=id_token
+  &response_mode=fragment
+  &redirect_uri=<yourRedirectURL>
+  &scope=openid%20profile%20email
+```
+(⚠️Be sure to replace `<yourRedirectURL>` with the redirect URL that you provided during registration)
+
+In the request above the `response_mode` value determines how the token is provided when the user's browser is redirected back to your application. It can be either `fragment` (the default) or `query`.
+
+After the user confirms they want to authorize your application to access their data, their browser will be redirected to your application with a request like this:
+
+```http
+GET <yourRedirectURL>#
+  id_token=SlAV32hkKG
+  &access_token=SlAV32hkKG
+  &token_type=Bearer
+  &expires_in=3600
+  &scope=openid%20profile%20email
+  &state=af0ifjsldkj
+Host: <yourRedirectHost>
+```
+(⚠️Be sure to replace `<yourRedirectURL>` with the redirect URL that you provided during registration, and `<yourRedirectHost>` with the host part of the redirect URL that you provided during registration)
+
+If you requested an `id_token` it will be returned as a parameter called `id_token`. If you requested a `token`, it will be returned as a parameter called `access_token`.
+
+The `access_token` can be used to authorize requests to the VA API Platform by including them in HTTP requests to the Platform by including it in the `Authorization` header as `Authorization: Bearer {token}`. When using the `id_token` to identify a user, you should validate that the token is properly signed and has the expected `audience` and `nonce`, see [id_token](#id-token) for more information.
+
+### Authorization Code Flow
+
+This flow is used by applications that are able to safely store a *client secret* such as a server-based applications and is selected by specifying the `response_type` as `code`.
+
+Your application will need to redirect the user's browser to our OpenID authorization server with a request like this:
+
+```http
+HTTP/1.1 302 Found
+Location: https://dev-api.va.gov/oauth2/authorization?
+  response_type=code
+  &scope=openid%20profile%20email%20offline_access
+  &client_id=s6BhdRkqt3
+  &state=af0ifjsldkj
+  &redirect_uri=<yourRedirectURL>
+```
+(⚠️Be sure to replace `<yourRedirectURL>` with the redirect URL that you provided during registration)
+
+After the user confirms they want to authorize your application to access their data, their browser will be redirected to your application with a request like this:
+
+```http
+GET <yourRedirectURL>#
+  code=z92dapo5
+  &state=af0ifjsldkj
+Host: <yourRedirectHost>
+```
+(⚠️Be sure to replace `<yourRedirectURL>` with the redirect URL that you provided during registration, and `<yourRedirectHost>` with the host part of the redirect URL that you provided during registration)
+
+Your application then makes a request to our authorization service using the returned `code` and `state` parameters. The request should use HTTP Basic authorization with your *client id* as the username and your *client secret* as the password. Your request should look like:
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: dev-api.va.gov
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic {base64 encoded *client id* + ':' + *client secret*}
+
+grant_type=authorization_code&code=z92dapo5&state=af0ifjsldkj&redirect_uri=<yourRedirectURL>
+```
+(⚠️Be sure to replace `<yourRedirectURL>` with the redirect URL that you provided during registration)
+
+The authorization server will response with an access token. If you requested the `offline_access` scope, you will also receive a `refresh_token`. The response will look like this:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: no-store
+Pragma: no-cache
+
+{
+  "access_token": "SlAV32hkKG",
+  "expires_in": 3600,
+  "refresh_token": "8xLOxBtZp8",
+  "scope": "openid profile email offline_access",
+  "state": "af0ifjsldkj",
+  "token_type": "Bearer",
+}
+```
+
+If an error occurs, you will instead receive a response like this:
+
+```http
+HTTP/1.1 400 Bad Request
+Content-Type: application/json
+Cache-Control: no-store
+Pragma: no-cache
+
+{
+  "error": "invalid_request"
+}
+```
+
+The resulting `access_token` can be used to authorize requests to the VA API Platform by including it in HTTP requests to the Platform by included it in the `Authorization` header as `Authorization: Bearer {access_token}`.
+
+The `refresh_token` can be used to obtain a new `access_token` after its expiry by sending the following request.
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: dev-api.va.gov
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic {base64 encoded *client id* + ':' + *client secret*}
+
+grant_type=refresh_token&refresh_token={your refresh_token}&scope={space separated scopes}
+```
+
+You will receive the same kind of response as above and be able to use your new `access_token` normally.
+
+### Hybrid Flow
+
+The hybrid flow is less common than either the authorization code flow or the implicit flow. It is used by applications that need a separate token for the front end and the backend of the application. During the hybrid flow, your application is essentially doing both an implicit flow and authorization code flow at the same time.
+
+You can initiate the hybrid flow by specifying more than one value in the `response_type` parameter when redirecting the user's browser to our authorization server. For example, you can receive both an authorization code and an ID token by specifying `response_type=code%20id_token`.
+
+The parameters provided when the user's browser is redirected back to your app have the same meaning as documented the [implicit flow](#implicit-flow) section and the [authorization code flow](#authorization-code-flow) section.
+
+## Scopes
+
+Scopes define the API endpoint your application is allowed to access. The VA API Platform team will define a maximum set of scopes your application is allowed to request. You can always begin an authorization flow by requesting fewer permissions that your application is allowed to access, which may result in more pleasant experience for users unsure if they should grant your application access to their data. You can then always request additional access to additional data when your application needs additional data for a Veteran or VSO using your application.
+
+**Existing Scopes are:**
+
+| Scope                    | Description |
+| ------------------------ | ----------- |
+| `profile`                | Granted by default, allows access to a user's first and last name and email. |
+| `offline_access`         | This scope causes the authorization server to provide a refresh token when the access token is requested. |
+| `launch/patient`         | A permission setting to obtain the patient's identifier in the token response when the app is launched from an EHR. |
+| `patient/*`              | <p>View a user's VA Health records and patient information, see specific read only scopes below.</p><ul><li><code>patient/Patient.read</code></li><li><code>patient/AllergyIntolerance.read</code></li><li><code>patient/Condition.read</code></li><li><code>patient/CoverageEligibilityResponse.read</code></li><li><code>patient/CommunityCareEligibility.read</code></li><li><code>patient/DiagnosticReport.read</code></li><li><code>patient/Immunization.read</code></li><li><code>patient/Medication.read</code></li><li><code>patient/MedicationOrder.read</code></li><li><code>patient/MedicationStatement.read</code></li><li><code>patient/Observation.read</code></li><li><code>patient/Procedure.read</code></li></ul> |
+| `service_history.read`   | View a Veteran's service history including deployments and discharge status |
+| `disability_rating.read` | View a Veteran's VA disability ratings and the effective date of the rating |
+| `veteran_status.read`    | Confirm the Veteran status of an individual |
+
+These are subject to change while the VA API Platform OpenID Connect feature is under development.
+
+## ID Token
+Unlike the token returned by an authorization_code grant or an implicit token grant, which is simply a random value, an `id_token` is a [JSON Web Token](https://jwt.io) or JWT. A JWT consists of three parts: a header, a payload, and a signature. This provides an extremely brief overview of a JWT.
+
+### Header
+
+The JWT's header has two fields `alg` and `kid`. `alg` indicates the algorithm that was used the sign the JWT, and `kid` identifies the key that was used to sign the JWT. Signing keys and associated metadata are accessible from `https://dev-api.va.gov/oauth2/.well-known/openid-configuration`.
+
+### Payload
+
+The payload is a JSON object containing `claims`.
+
+There are a couple claims in the JWT that are important for your application to consider:
+
+* `nonce` - should match the `nonce` you initiated authorization with.
+* `exp` - the expiration time of the JWT. The token cannot be accepted by the VA API Platform after this time, and your application should not use an expired token to identify a user.
+
+The payload also contains claims about the user. Our JWTs will have the following fields:
+
+* `uid` - A unique identifier for the user in UUIDv4 format.
+
+### Signature
+
+The signature is a cryptographically generated signature of the JWT's header and payload used to confirm the JWT's authenticity. Your application must validate this signature using the `alg` and the `kid` from the JWT's header. You may want use one of the JWT libraries listed at [jwt.io](https://jwt.io) to help make this process easier.
+
+## Test Users
+
+While developing and testing your application, you'll need to be able to login. Since most of the data provided from the VA API Platform comes from internal VA systems, you can't sign up for an account and find useful data in it. We provide [test accounts](https://github.com/department-of-veterans-affairs/vets-api-clients/blob/master/test_accounts.md) for you to use while developing your VA API Platform-based application. 
+
+Test user data is reset regularly.
+
+## Security Considerations
+
+While some security concerns have been noted in this document, there are a few things application developers should take extra care to pay attention to when using VA OAuth.
+
+### HTTPS
+
+Outside of local development environments, all authorization callbacks must use the `https` protocol for communication. The `https` protocol provides a secure encrypted connection between the user's client, your application, and the VA API Platform and authorization servers. This mitigates the risk of some types of man-in-the-middle attacks and prevents third-parties from intercepting user's authorization credentials.
+
+Additionally, the VA API Platform team requires your application to use secure ciphers and versions of the underlying SSL/TLS protocol.
+
+### state
+
+Specifying a `state` param helps protect against some classes of Cross Site Request Forgery (CSRF) attacks, and applications should include it. The `state` param will be passed back from the authorization server to your redirect URL unchanged, and your application should verify that it has the expected value. This helps assure that the client receiving the authorization response is the same as the client that initiated the authorization process.
+
+### nonce
+
+Using a `nonce` with JWTs prevents some kinds of replay attacks where a malicious party can attempt to resend an `id_token` request in order to impersonate a user of your application.
+
+A nonce should be generated on a per-session basis and stored on the user's client.
+
+The [OpenID Connect documentation](https://openid.net/specs/openid-connect-core-1_0.html#NonceNotes) offers the following suggestion for generating nonces:
+
+> The nonce parameter value needs to include per-session state and be unguessable to attackers. One method to achieve this for Web Server Clients is to store a cryptographically random value as an HttpOnly session cookie and use a cryptographic hash of the value as the nonce parameter. In that case, the nonce in the returned ID Token is compared to the hash of the session cookie to detect ID Token replay by third parties. A related method applicable to JavaScript Clients is to store the cryptographically random value in HTML5 local storage and use a cryptographic hash of this value.
+
+### JWT Signature validation
+
+Your application must validate JWT signatures. This allows your application to verify that the provided JWT originates from our authorization servers and prevents your application from accepting a JWT with claims that are attempting to impersonate one of your users.
+
+## Support
+
+If you have any questions please feel free to reach out to the VA API Platform team at [api@va.gov](mailto:api@va.gov). If you would like to report a bug or make a feature request, please open an issue through our [Support page](https://developer.va.gov/support).
+
+## Sample Application
+
+We provide a sample [Node.JS](https://nodejs.org/en/) application for demonstrating how to get up and running with our OAuth system. You can find the complete source code for it on our [GitHub](https://github.com/department-of-veterans-affairs/vets-api-clients/tree/master/samples/oauth_node). The following walk-through will show step-by-step how to setup a Node.JS application to use VA OAuth using [express](https://expressjs.com/), [passport](http://www.passportjs.org/), and [node-openid-client](https://github.com/panva/node-openid-client). 
+
+### Requirements
+
+This walk-through assumes you have already installed Node.JS and [NPM](https://www.npmjs.com/get-npm), and that you have obtained an OAuth application client\_id and client\_secret with `<yourRedirectURL>` (⚠️Be sure to replace `<yourRedirectURL>` with the redirect URL that you provided during registration) as a white-listed redirect_uri. 
+
+### Init and Install Dependencies
+
+In a terminal window, create a new directory for your application:
+
+`mkdir va-oauth`
+
+Init the Node project
+
+`npm init`
+
+You'll be prompted to answer some questions about your application in order to a generate a `package.json` file. Leaving the default value in place should be generally fine. You should be left with a file that looks like:
+
+```json
+{
+  "name": "va-oauth",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
+```
+
+Next you'll need to install the dependencies we'll be using for the project:
+
+```
+npm install --save express \
+  express-session \
+  passport \
+  openid-client
+```
+
+* Express is a "Fast, unopinionated, minimalist web framework for Node.js". It provides the routing layer and utilities around handling asynchronous HTTP requests for our application
+* Express-sesssion is a middleware for Express that allows us to use HTTP Cookies to store user information without introducing state into our server
+* Passport is "Simple, unobtrusive authentication for Node.js". It provides authentication for our application through customize-able authentication Strategies. 
+* node-openid-client is an [OpenID](https://openid.net/developers/specs/) client library for Node.js. It handles most of the communication with VA's OAuth authorizations and provides an OpenID-based Passport Strategy for your application's authentication. 
+
+### Configure the OpenID Client
+
+Open up a file called `index.js` in your editor of choice and add the following:
+
+```JavaScript
+const { Issuer } = require('openid-client');
+
+const ROOT_URL = 'https://dev-api.va.gov/oauth2/.well-known/openid-configuration';
+const client_id = 'your_client_id';
+const client_secret = 'your_client_secret';
+
+const createClient = async () => {
+  Issuer.defaultHttpOptions = { timeout: 2500 };
+  return Issuer.discover(ROOT_URL).then(issuer => {
+    return new issuer.Client({
+      client_id,
+      client_secret,
+      redirect_uris: [
+        '<yourRedirectURL>'
+      ],
+    });
+  });
+}
+```
+(⚠️Be sure to replace `<yourRedirectURL>` with the redirect URL that you provided during registration)
+
+Congratulations you should be able to run `node index.js` in your terminal and have it exit with no errors. All of the configuration required for OpenID Connect can be handled by the client reading metadata supplied by the VA OAuth authorization server. 
+
+### Configure Express and Passport
+
+Next you'll need to add some configuration for Express and Passport so they can communicate with the VA OAuth authorization server and save returned OAuth tokens into the authenticated user's session.
+
+Open `index.js` up again in your preferred editor. Add the following require statements at the top (replacing the existing one):
+
+```JavaScript
+const express = require('express');
+const session = require('express-session');
+const { Issuer, Strategy } = require('openid-client');
+const passport = require('passport');
+```
+
+Below your `createClient` function add a new function:
+
+```JavaScript
+const configurePassport = (client) => {
+  passport.serializeUser((user, done) => {
+    done(null, user);
+  });
+
+  passport.deserializeUser((user, done) => {
+    done(null, user);
+  });
+
+  passport.use('oidc', new Strategy(
+    {
+      client,
+      params: {
+        scope: 'openid profile veteran_status.read',
+      },
+    }, (tokenset, userinfo, done) => {
+      done(null, { userinfo, tokenset });
+    }
+  ));
+}
+```
+
+This creates a new passport strategy that will use OpenID Connect to authenticate users in your application. The `serializeUser` and `deserializeUser` functions are boilerplate, so don't worry about them right now!
+
+Below that, let's add another function `startApp`:
+
+```JavaScript
+const startApp = (client) => {
+  const app = express();
+  const port = 8080;
+  const secret = 'My Super Secret Secret'
+  app.use(passport.initialize());
+  app.use(passport.session());
+  app.use(session({ secret }));
+
+  app.get('/', (req, res) => res.send('Hello World!'));
+  
+  app.listen(port, () => console.log(`Example app listening on port ${port}!`));
+}
+```
+
+The `startApp` function simply handles configuring passport and express-session, so they can be used from express. the `secret` const should be changed to a random value in production. 
+
+Finally let's add a little glue so we can get up and running. At the bottom of the file add:
+
+```JavaScript
+(async () => {
+  try {
+    const oidcClient = await createClient();
+    configurePassport(oidcClient);
+    startApp(oidcClient);
+  } catch (err) {
+    console.error(err);
+    process.exit(1);
+  }
+})();
+```
+
+This anonymous function asynchronously retrieves the client information then starts the express server. Now you should be able to run `node index.js` and navigate to `<yourRedirectURL>` in your browser (⚠️Be sure to replace `<yourRedirectURL>` with the redirect URL that you provided during registration). You should see 'Hello World!' on your screen. 
+
+### Add OpenID authorization
+
+Now, we'll add routes to handle the OpenID authorization. Again in `index.js` in our `startApp` function:
+
+```JavaScript
+app.get('/', (req, res) => res.send('Hello World!')); // already exists
+
+app.get('/auth', passport.authenticate('oidc'));
+app.get(
+  '/auth/cb',
+  passport.authenticate('oidc', { successRedirect: '/', failureRedirect: '/'})
+);
+```
+
+And that's all you'll need to do to add VA OAuth to a node application. After starting the app up again with `node index.js` navigate to `<yourRedirectHost>/auth` in your browser (⚠️Be sure to replace `<yourRedirectHost>` with the host part of the redirect URL that you provided during registration). Your browser should then take you through the login flow and return you to a page displaying 'Hello World!'. 
+
+### Add the Veteran Status API Call
+
+Finally, let's add a real call to the Veteran Status API. In the `index.js` file lets add another require statement:
+
+```JavaScript
+const https = require('https');
+```
+
+Then above `startApp`:
+
+```JavaScript
+const verifyVeteranStatus = async (req, res, next) => {
+  if (req.session && req.session.passport && req.session.passport.user) {
+    const veteranStatus = await new Promise((resolve, reject) => {
+      https.get(
+        'https://dev-api.va.gov/services/veteran_verification/v0/status',
+        { headers: {'Authorization': `Bearer ${req.session.passport.user.tokenset.access_token}`} },
+        (res) => {
+          let rawData = '';
+          if (res.statusCode !== 200) {
+            reject(new Error('Request Failed'));
+          }
+          res.setEncoding('utf-8');
+          res.on('data', (chunk) => { rawData += chunk; });
+          res.on('end', () => {
+            try {
+              const parsedOutput = JSON.parse(rawData);
+              resolve(parsedOutput.data.attributes.veteran_status);
+            } catch (err) {
+              reject(err);
+            }
+          });
+        }
+      ).on('error', reject);
+    });
+    res.send(veteranStatus);
+    next();
+  } else {
+    res.redirect('/auth'); // Redirect the user to login if they are not
+    next();
+  }
+};
+```
+
+Finally let's add a new route to the application in `startApp`:
+
+```JavaScript
+app.get('/', (req, res) => res.send('Hello World!')); // already exists
+app.get('/status', verifyVeteranStatus);
+```
+
+Now, after restarting `node index.js` you can first navigate to `<yourRedirectHost>/auth` in your browser (⚠️Be sure to replace `<yourRedirectHost>` with the host part of the redirect URL that you provided during registration) to login, then navigate to `<yourRedirectHost>/status` to see your Veteran Status. 
+
+### Get all the code
+
+Find the full code for the sample app [here](https://github.com/department-of-veterans-affairs/vets-api-clients/tree/master/samples/oauth_node).
